@@ -1,0 +1,176 @@
+#!/bin/bash
+set -e
+rm ~/tmp/snak.log || echo no problem buddy
+################################################################################
+debug() { if [ "$debugflag" = "true" ]; then printf "%s\n" "$1"; fi; }
+################################################################################
+#set momentum parameters, get player input, 
+snake_update () {
+	snake_direction="$(player_input)"
+	if [ -z "$snake_direction" -o \
+		"$snake_direction" = "$snake_direction_opposite" ]; then return; fi
+	
+	case "$snake_direction" in
+		(up)	snake_r=-1; snake_c=0; snake_direction_opposite="down"; ;;
+		(right) snake_c=1;  snake_r=0; snake_direction_opposite="left"; ;;
+		(down) 	snake_r=1;  snake_c=0; snake_direction_opposite="up"; ;;
+		(left) 	snake_c=-1; snake_r=0; snake_direction_opposite="right"; ;;
+	esac
+}
+
+snake_grow () {
+	IFS=":" read -a coord <<< "$(snake_head)"
+	local r="$((coord[0] + snake_r))"; local c="$((coord[1] + snake_c))"
+	if   [ "$r" -lt 0 ]; then r="$((board_height-1))"
+	elif [ "$c" -lt 0 ]; then c="$((board_width-1))"
+	elif [ "$r" -ge $board_height ];then r=0 
+	elif [ "$c" -ge $board_width ]; then c=0
+	elif [ "$r" -eq "$pellet_r" -a "$c" -eq "$pellet_c" ]; then snake_eat
+ 	elif [ "$(collision_snakebody "$r" "$c")" ]; then game_lost "hit w/self"
+	fi
+	tput_cup "$r" "$c";	printf "%s" "$snake_symbol"	
+	snake_coords+=("${r}:${c}")	
+	echo "${snake_coords[@]}" >> ~/tmp/snak.log
+}
+collision_snakebody () {
+	r="$1"; c="$2"
+	for s in "${snake_coords[@]}"; do
+		if [ "$s" = "$(snake_head)" ]; then continue; fi
+		IFS=":" read -a sc <<< "$s"
+		if [ "$r" -eq "${sc[0]}" -a "$c" -eq "${sc[1]}" ]; then
+			printf "$r:$c"; break
+		fi
+	done
+}
+snake_head () {	printf "%s" "${snake_coords[-1]}"; }
+snake_tail () { printf "%s" "${snake_coords[0]}"; }
+snake_retract () {
+	#this naturally allows a snake to grow to N length in N moves
+	if [ "${#snake_coords[@]}" -le "$snake_length" ]; then return; fi
+	IFS=":" read -a coord <<< "$(snake_tail)" # s="${snake_coords[@]:1}"
+	r="${coord[0]}"; c="${coord[1]}"
+	tput_cup "$r" "$c"; printf " "
+	#resave the array without the [0] entry	
+	read -a s <<< "${snake_coords[@]:1}"
+	unset snake_coords; 	read -a snake_coords <<< "${s[@]}"
+}
+snake_eat () {
+	pellet_r="$(random_row)" 
+	pellet_c="$(random_col)"
+	while [ "$(collision_snakebody "$pellet_r" "$pellet_c")" ]; do
+		pellet_r="$(random_row)" 
+		pellet_c="$(random_col)"
+	done
+	snake_length="$((snake_length + 1))"
+	game_speed="$(bc <<< "scale=10; $game_speed / 1.3")"
+	tput_cup "$pellet_r" "$pellet_c"
+	printf "%s" "$pellet_symbol"
+}
+################################################################################
+random_row () { printf "%s" "$((RANDOM % board_height))"; }
+random_col () { printf "%s" "$((RANDOM % board_width))"; }
+
+player_input () {
+	read -s -n 1 -t "$game_speed" key
+	# so this is a hack to capture the multi-byte arrowkey characters
+	read -s -n 3 -t .0001 key2 
+	key="$key$key2"
+	case $key in
+		(w|W|$'\e[A') translated_key="up"; ;;
+		(d|D|$'\e[C') translated_key="right"; ;;
+		(s|S|$'\e[B') translated_key="down"; ;;
+		(A|a|$'\e[D') translated_key="left"; ;;
+		(e|E) game_speed="$(bc <<< "scale=100; $game_speed / 100")"; ;; 
+		(q|Q) game_speed="$(bc <<< "scale=100; $game_speed * 100")"; ;;
+	esac
+	#key ---> WASD and ARROWKEYS = translated key
+	printf "%s" "$translated_key"
+}
+enter_game () {
+	clear;	stty -echo;	tput civis
+	game_state=running
+}
+exit_game () {
+	stty echo; tput cnorm; echo; exit 0
+}
+game_lost () {
+	center_print "-1" "YOU LOSE"
+	while [ -n "$1" ]; do center_print $off "$1"; shift; off=$((off + 1)); done
+	sleep 1
+	exit 1
+}
+################################################################################	
+tput_cup () {
+	local ptrr="$1"; local ptrc="$2"
+	tput cup "$((ptrr+offset))" "$((ptrc+offset))"
+}
+################################################################################
+#optional r specification (+/- from center); then all arguments are words
+center_print () {
+	if [ "$(is_not_int "$1")" ]; then row_offset=0; else row_offset="$1"; shift; fi
+	message="$*" length="${#message}"
+	col="$(( (border_width  / 2) - (length / 2)))"
+	row="$(( (border_height / 2) + row_offset))"
+	if [ "$length" -gt "$board_width" ]; then exit 177
+	else tput cup "$row" "$col"; printf "%s" "$message"; fi
+}
+# middle of board looks like "THICK        <empty space>       THICK"
+create_border() {
+	tput cup 0 0
+	h_bar="$(strbuilder "$border_width" "$border_symbol")"
+	for _ in $(seq 1 "$border_thickness"); do 
+		siding+="$border_symbol"
+		horizontal_bar+="$h_bar"	
+	done
+	space_gap="$(strbuilder -r "$board_width" ' ')"
+	vertical_bar="${siding}${space_gap}${siding}"
+	border_shape="${horizontal_bar}\n"
+	#echo "$vertical_bar"; sleep 10
+	for _ in $(seq 1 "$board_height"); do 
+		border_shape+="${vertical_bar}\n"; 
+	done
+	border_shape+="$horizontal_bar"
+}
+draw_border() {	tput cup 0 0; printf "%b" "$border_shape"; tput cup 0 0; }
+################################################################################
+trap 'exit_game' EXIT ERR
+is_int ()	  { [ ! "$(is_not_int "$1")" ] && printf "%s" "true"; }
+is_not_int () { printf "${1//[-0-9]/}"; }
+################################################################################
+debugflag="false"
+#0,0 + board_0 value. from top left, of Konsole. offset for printing
+border_width="$(tput cols)"; border_height="$(tput lines)"
+border_symbol="#";  border_shape=''
+border_thickness=7; offset="$border_thickness"; board_0="$offset"
+board_x=$((border_width-offset)); board_y=$((border_height-offset));
+board_width=$((border_width - offset * 2))
+board_height=$((border_height - offset * 2))
+#board_width=20;		board_height=20
+snake_c=1; snake_r=0; snake_length=5; snake_coords=()
+snake_direction="";		snake_direction_opposite="leftw"
+game_speed=.09;		game_score=-10
+snake_symbol="$(strbuilder -cf red 'S' 1)"
+pellet_symbol="$(strbuilder -cf white -cb grey "*" 1)"
+pellet_r="$(random_row)"; pellet_c="$(random_col)"
+#snake_symbol="S"; 	pellet_symbol="@"
+snake_coords+=("1:1")
+while [ -n "$1" ]; do
+	case "$1" in
+		(help|--help|-h) echo "help text!!"; ;;
+		(1*|2*|3*|4*|5*|6*|7*|8*|9*) echo "you gave me numbers!"; ;;
+	esac
+	shift
+done
+
+clear
+create_border
+enter_game
+draw_border
+tput_cup "$pellet_r" "$pellet_c"
+printf "%s" "$pellet_symbol"
+while [ "$game_state" = "running" ]; do
+	snake_update #change direction
+	snake_grow
+	snake_retract #deletes tail
+	sleep "$game_speed"
+done
