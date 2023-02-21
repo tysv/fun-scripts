@@ -47,8 +47,8 @@ while [ $# -gt 0 ]; do
 			printf "%s\n" "coin: $message"
 		else
 			printf "%s\n" "d$die_sides: $message"; fi
-	shift 1
 	fi
+	shift 1
 done
 
 if [ $overflowflag = true ]; then
