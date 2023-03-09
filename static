@@ -1,7 +1,11 @@
 #!/bin/bash
 
-if [ "$1" ]; then
-	echo "USAGE: run with no parameters. Press any key to stop."; exit 0
+if [ "$#" -gt 1 ]; then
+	echo "USAGE: static <arg>	will exit after <arg> seconds:"
+	echo "USAGE: ran with no parameters endlessly & press any key to stop"
+	exit 0
+elif [ -n "$1" -a "$#" -eq 1 -a "${1//[0-9]/}" = '' ]; then timer="$1"
+else timer="120000"
 fi
 
 width=$(tput cols)
@@ -23,7 +27,7 @@ count=0
 line=''
 block=''
 inkey=''
-while [ true ]; do
+while [ "$timer" -gt "$SECONDS" ]; do
 	line="$(shuf -e ${randomseed[@]} | tr -d '\n')"
 	line="${line[@]:0:$width}"
 	block+="$line"
